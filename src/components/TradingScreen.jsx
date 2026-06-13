@@ -155,9 +155,16 @@ export default function TradingScreen({ onBack, initialSymbol = '005930.KS' }) {
             <div className="flex-between">
               <div>
                 <h2 style={{ fontSize: '2rem' }}>{quote.localName || quote.shortName || symbol} <span className="text-muted" style={{ fontSize: '1.2rem', marginLeft: '0.5rem' }}>{symbol}</span></h2>
-                <div style={{ fontSize: '2.5rem', fontWeight: 'bold', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  {formatCurrency(quote.regularMarketPrice)}
-                  <span className={isPositive ? 'text-green' : 'text-red'} style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center' }}>
+                <div style={{ fontSize: '2.5rem', fontWeight: 'bold', marginTop: '0.5rem', display: 'flex', alignItems: 'flex-end', gap: '1rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span>{formatCurrency(quote.regularMarketPrice)}</span>
+                    {quote.originalPriceUSD && (
+                      <span className="text-muted" style={{ fontSize: '1rem', marginTop: '0.2rem' }}>
+                        ($ {quote.originalPriceUSD.toFixed(2)})
+                      </span>
+                    )}
+                  </div>
+                  <span className={isPositive ? 'text-green' : 'text-red'} style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
                     {isPositive ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
                     {isPositive ? '+' : ''}{quote.regularMarketChange?.toFixed(2)} ({quote.regularMarketChangePercent?.toFixed(2)}%)
                   </span>

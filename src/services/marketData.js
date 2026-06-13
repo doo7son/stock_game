@@ -1,6 +1,5 @@
 // Service to fetch market data from Yahoo Finance via local Vite proxy or Vercel rewrites
 
-// 한글 종목명을 야후 파이낸스 티커로 변환하기 위한 데이터
 export const KOREAN_STOCKS = [
   { symbol: '005930.KS', name: '삼성전자', shortname: 'Samsung Electronics' },
   { symbol: '000660.KS', name: 'SK하이닉스', shortname: 'SK Hynix' },
@@ -12,7 +11,6 @@ export const KOREAN_STOCKS = [
   { symbol: '000270.KS', name: '기아', shortname: 'Kia' },
   { symbol: '068270.KS', name: '셀트리온', shortname: 'Celltrion' },
   { symbol: '051910.KS', name: 'LG화학', shortname: 'LG Chem' },
-  // 미국 인기 주식
   { symbol: 'AAPL', name: '애플', shortname: 'Apple Inc.' },
   { symbol: 'TSLA', name: '테슬라', shortname: 'Tesla, Inc.' },
   { symbol: 'NVDA', name: '엔비디아', shortname: 'NVIDIA Corporation' },
@@ -20,13 +18,39 @@ export const KOREAN_STOCKS = [
   { symbol: 'GOOGL', name: '구글 (Alphabet)', shortname: 'Alphabet Inc.' },
 ];
 
-export const fetchQuotes = async (symbols) => {
-  if (!symbols || symbols.length === 0) return [];
-  
-  const symbolArray = Array.isArray(symbols) ? symbols : [symbols];
+// 전역 환율 캐시
+let cachedExchangeRate = 1400;
+let lastExchangeRateFetch = 0;
+
+export const fetchExchangeRate = async () => {
+  const now = Date.now();
+  // 5분마다 갱신
+  if (now - lastExchangeRateFetch < 5 * 60 * 1000 && lastExchangeRateFetch !== 0) {
+    return cachedExchangeRate;
+  }
   
   try {
-    // 막혀있는 v7/finance/quote 대신 열려있는 v8/finance/chart API의 meta 영역을 활용하여 현재가를 가져옵니다.
+    const response = await fetch(`/api/yahoo/v8/finance/chart/KRW=X?range=1d&interval=1d`);
+    if (!response.ok) return cachedExchangeRate;
+    const data = await response.json();
+    const rate = data.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (rate) {
+      cachedExchangeRate = rate;
+      lastExchangeRateFetch = now;
+    }
+    return cachedExchangeRate;
+  } catch (error) {
+    console.error("Failed to fetch exchange rate", error);
+    return cachedExchangeRate;
+  }
+};
+
+export const fetchQuotes = async (symbols) => {
+  if (!symbols || symbols.length === 0) return [];
+  const symbolArray = Array.isArray(symbols) ? symbols : [symbols];
+  const exchangeRate = await fetchExchangeRate();
+  
+  try {
     const promises = symbolArray.map(async (symbol) => {
       try {
         const response = await fetch(`/api/yahoo/v8/finance/chart/${symbol}?range=1d&interval=1d`);
@@ -38,20 +62,26 @@ export const fetchQuotes = async (symbols) => {
         
         const localStock = KOREAN_STOCKS.find(s => s.symbol === symbol);
         
-        const regularMarketPrice = meta.regularMarketPrice;
-        const previousClose = meta.chartPreviousClose;
+        const isUSD = meta.currency === 'USD';
+        const rate = isUSD ? exchangeRate : 1;
+
+        const regularMarketPrice = meta.regularMarketPrice * rate;
+        const previousClose = meta.chartPreviousClose * rate;
         const change = regularMarketPrice - previousClose;
         const changePercent = (change / previousClose) * 100;
 
         return {
           symbol: symbol,
+          currency: meta.currency,
+          originalPriceUSD: isUSD ? meta.regularMarketPrice : null,
+          exchangeRateUsed: isUSD ? exchangeRate : 1,
           regularMarketPrice: regularMarketPrice,
           regularMarketPreviousClose: previousClose,
           regularMarketChange: change,
           regularMarketChangePercent: changePercent,
           regularMarketVolume: meta.regularMarketVolume || 0,
-          regularMarketDayLow: meta.regularMarketPrice * 0.98, // 차트 API 메타에는 일일 저가/고가가 없으므로 근사치 제공
-          regularMarketDayHigh: meta.regularMarketPrice * 1.02,
+          regularMarketDayLow: (meta.regularMarketPrice * 0.98) * rate, 
+          regularMarketDayHigh: (meta.regularMarketPrice * 1.02) * rate,
           shortName: localStock ? localStock.shortname : symbol,
           localName: localStock ? localStock.name : symbol
         };
@@ -62,7 +92,7 @@ export const fetchQuotes = async (symbols) => {
     });
 
     const results = await Promise.all(promises);
-    return results.filter(Boolean); // null 제거
+    return results.filter(Boolean);
 
   } catch (error) {
     console.error("Failed to fetch quotes:", error);
@@ -71,18 +101,20 @@ export const fetchQuotes = async (symbols) => {
 };
 
 export const fetchChartData = async (symbol, range = '1mo', interval = '1d') => {
+  const exchangeRate = await fetchExchangeRate();
+
   try {
     const response = await fetch(`/api/yahoo/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`);
-    
-    if (!response.ok) {
-      throw new Error('Network response was not ok');
-    }
+    if (!response.ok) throw new Error('Network response was not ok');
     
     const data = await response.json();
     const result = data.chart?.result?.[0];
-    
     if (!result) return [];
     
+    const meta = result.meta;
+    const isUSD = meta?.currency === 'USD';
+    const rate = isUSD ? exchangeRate : 1;
+
     const timestamps = result.timestamp || [];
     const quotes = result.indicators?.quote?.[0] || {};
     
@@ -90,10 +122,10 @@ export const fetchChartData = async (symbol, range = '1mo', interval = '1d') => 
       return {
         time: new Date(time * 1000).toLocaleDateString(),
         fullTime: new Date(time * 1000).toLocaleString(),
-        open: quotes.open?.[index] || null,
-        high: quotes.high?.[index] || null,
-        low: quotes.low?.[index] || null,
-        close: quotes.close?.[index] || null,
+        open: quotes.open?.[index] ? quotes.open[index] * rate : null,
+        high: quotes.high?.[index] ? quotes.high[index] * rate : null,
+        low: quotes.low?.[index] ? quotes.low[index] * rate : null,
+        close: quotes.close?.[index] ? quotes.close[index] * rate : null,
         volume: quotes.volume?.[index] || null,
       };
     }).filter(item => item.close !== null);
@@ -105,11 +137,9 @@ export const fetchChartData = async (symbol, range = '1mo', interval = '1d') => 
   }
 };
 
-// 검색 기능: 로컬 데이터베이스 먼저 검색 후, 야후 API 검색
 export const searchSymbols = async (query) => {
   const normalizedQuery = query.toLowerCase().trim();
   
-  // 1. 자체 한글/영문 데이터베이스에서 검색
   const localResults = KOREAN_STOCKS.filter(stock => 
     stock.name.toLowerCase().includes(normalizedQuery) || 
     stock.symbol.toLowerCase().includes(normalizedQuery) ||
@@ -120,12 +150,8 @@ export const searchSymbols = async (query) => {
     quoteType: 'EQUITY'
   }));
 
-  // 로컬에 검색 결과가 있으면 바로 반환 (야후 API 호출 안함)
-  if (localResults.length > 0) {
-    return localResults;
-  }
+  if (localResults.length > 0) return localResults;
 
-  // 2. 야후 API 검색 (영문/해외주식) - 검색 API는 뚫려있음
   try {
     const response = await fetch(`/api/yahoo/v1/finance/search?q=${query}&quotesCount=5&newsCount=0`);
     if (!response.ok) throw new Error('Search failed');
