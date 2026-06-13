@@ -2,11 +2,22 @@
   "rewrites": [
     {
       "source": "/api/yahoo/:path*",
-      "destination": "https://query1.finance.yahoo.com/:path*"
+      "destination": "https://query2.finance.yahoo.com/:path*"
     },
     {
       "source": "/(.*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/yahoo/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
     }
   ]
 }

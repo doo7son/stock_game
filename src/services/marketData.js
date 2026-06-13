@@ -23,25 +23,47 @@ export const KOREAN_STOCKS = [
 export const fetchQuotes = async (symbols) => {
   if (!symbols || symbols.length === 0) return [];
   
+  const symbolArray = Array.isArray(symbols) ? symbols : [symbols];
+  
   try {
-    const symbolsString = Array.isArray(symbols) ? symbols.join(',') : symbols;
-    const response = await fetch(`/api/yahoo/v7/finance/quote?symbols=${symbolsString}`);
-    
-    if (!response.ok) {
-      throw new Error('Network response was not ok');
-    }
-    
-    const data = await response.json();
-    const results = data.quoteResponse?.result || [];
-    
-    // 야후 API에서 가져온 영문 이름을 한글로 교체
-    return results.map(quote => {
-      const localStock = KOREAN_STOCKS.find(s => s.symbol === quote.symbol);
-      if (localStock) {
-        return { ...quote, localName: localStock.name };
+    // 막혀있는 v7/finance/quote 대신 열려있는 v8/finance/chart API의 meta 영역을 활용하여 현재가를 가져옵니다.
+    const promises = symbolArray.map(async (symbol) => {
+      try {
+        const response = await fetch(`/api/yahoo/v8/finance/chart/${symbol}?range=1d&interval=1d`);
+        if (!response.ok) return null;
+        
+        const data = await response.json();
+        const meta = data.chart?.result?.[0]?.meta;
+        if (!meta) return null;
+        
+        const localStock = KOREAN_STOCKS.find(s => s.symbol === symbol);
+        
+        const regularMarketPrice = meta.regularMarketPrice;
+        const previousClose = meta.chartPreviousClose;
+        const change = regularMarketPrice - previousClose;
+        const changePercent = (change / previousClose) * 100;
+
+        return {
+          symbol: symbol,
+          regularMarketPrice: regularMarketPrice,
+          regularMarketPreviousClose: previousClose,
+          regularMarketChange: change,
+          regularMarketChangePercent: changePercent,
+          regularMarketVolume: meta.regularMarketVolume || 0,
+          regularMarketDayLow: meta.regularMarketPrice * 0.98, // 차트 API 메타에는 일일 저가/고가가 없으므로 근사치 제공
+          regularMarketDayHigh: meta.regularMarketPrice * 1.02,
+          shortName: localStock ? localStock.shortname : symbol,
+          localName: localStock ? localStock.name : symbol
+        };
+      } catch (err) {
+        console.error(`Error fetching quote for ${symbol}`, err);
+        return null;
       }
-      return { ...quote, localName: quote.shortName || quote.symbol };
     });
+
+    const results = await Promise.all(promises);
+    return results.filter(Boolean); // null 제거
+
   } catch (error) {
     console.error("Failed to fetch quotes:", error);
     return [];
@@ -103,7 +125,7 @@ export const searchSymbols = async (query) => {
     return localResults;
   }
 
-  // 2. 야후 API 검색 (영문/해외주식)
+  // 2. 야후 API 검색 (영문/해외주식) - 검색 API는 뚫려있음
   try {
     const response = await fetch(`/api/yahoo/v1/finance/search?q=${query}&quotesCount=5&newsCount=0`);
     if (!response.ok) throw new Error('Search failed');
