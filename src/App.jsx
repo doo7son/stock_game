@@ -1,18 +1,45 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import TradingScreen from './components/TradingScreen';
 import WelcomeScreen from './components/WelcomeScreen';
 import Leaderboard from './components/Leaderboard';
 import { usePortfolioStore } from './store/portfolioStore';
-import { RefreshCw, LayoutDashboard, LineChart, Trophy } from 'lucide-react';
+import { RefreshCw, LayoutDashboard, LineChart, Trophy, LogOut } from 'lucide-react';
+import { loginUser } from './services/firebase';
 
 function App() {
   const [currentView, setCurrentView] = useState('DASHBOARD'); // DASHBOARD, TRADING, LEADERBOARD
   const [selectedStock, setSelectedStock] = useState('005930.KS'); // 삼성전자를 기본값으로
+  const [isInitializing, setIsInitializing] = useState(true);
   
-  const { nickname, resetAccount } = usePortfolioStore();
+  const { userId, nickname, resetAccount, setUserData } = usePortfolioStore();
 
-  if (!nickname) {
+  useEffect(() => {
+    const autoLogin = async () => {
+      const savedUser = localStorage.getItem('stock_game_user');
+      if (savedUser) {
+        try {
+          const { userId, password } = JSON.parse(savedUser);
+          const result = await loginUser(userId, password);
+          if (result.success) {
+            setUserData(result.data);
+          } else {
+            localStorage.removeItem('stock_game_user');
+          }
+        } catch (e) {
+          localStorage.removeItem('stock_game_user');
+        }
+      }
+      setIsInitializing(false);
+    };
+    autoLogin();
+  }, []);
+
+  if (isInitializing) {
+    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>데이터 불러오는 중...</div>;
+  }
+
+  if (!userId) {
     return (
       <div className="app-container">
         <header style={{ borderBottom: 'none' }}>
@@ -49,15 +76,14 @@ function App() {
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <button 
             className="danger" 
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', background: 'transparent', border: '1px solid var(--accent-red)' }}
             onClick={() => {
-              if (window.confirm('정말 계좌를 초기화하시겠습니까? 모든 기록이 삭제됩니다.')) {
+              if (window.confirm('로그아웃 하시겠습니까?')) {
                 resetAccount();
-                setCurrentView('DASHBOARD');
               }
             }}
           >
-            <RefreshCw size={16} /> 파산 신청 (초기화)
+            <LogOut size={16} /> 로그아웃
           </button>
         </div>
       </header>

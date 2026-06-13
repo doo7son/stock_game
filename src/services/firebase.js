@@ -1,41 +1,108 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDocs, collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
+// .env에 잘못된 형식으로 업로드된 것을 방지하기 위해 하드코딩된 설정 사용 (학생용 앱이라 클라이언트 공개키여도 무방함)
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: "AIzaSyCutWcSkAV0rTOUgVrJH7pZO6e5i5W8PmE",
+  authDomain: "stock-61b7e.firebaseapp.com",
+  projectId: "stock-61b7e",
+  storageBucket: "stock-61b7e.firebasestorage.app",
+  messagingSenderId: "1082901164521",
+  appId: "1:1082901164521:web:fe0d144631057f568a5b78",
+  measurementId: "G-5L1H1GH5JT"
 };
 
-// Initialize only if config is provided
-let app;
-let db = null;
-
-try {
-  if (firebaseConfig.apiKey) {
-    app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    console.log("Firebase initialized successfully.");
-  } else {
-    console.warn("Firebase config is missing. Leaderboard will be disabled or mocked.");
-  }
-} catch (error) {
-  console.error("Firebase initialization error:", error);
-}
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 export { db };
 
-// Sync user data to Firestore
-export const syncUserData = async (nickname, totalValue, returnPct) => {
-  if (!db || !nickname) return;
+/**
+ * 회원가입 (계좌 개설)
+ */
+export const signUpUser = async (userId, password, nickname) => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    
+    if (userSnap.exists()) {
+      return { success: false, message: "이미 존재하는 아이디입니다." };
+    }
+
+    // 초기 데이터베이스 생성
+    const initialData = {
+      userId,
+      password,
+      nickname,
+      balance: 10000000, // 1000만원 시작
+      portfolio: {},
+      totalValue: 10000000,
+      returnPct: 0,
+      createdAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString()
+    };
+
+    await setDoc(userRef, initialData);
+    return { success: true, data: initialData };
+  } catch (error) {
+    console.error("Sign up error:", error);
+    return { success: false, message: "계좌 개설 중 오류가 발생했습니다." };
+  }
+};
+
+/**
+ * 로그인
+ */
+export const loginUser = async (userId, password) => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    
+    if (!userSnap.exists()) {
+      return { success: false, message: "존재하지 않는 아이디입니다." };
+    }
+
+    const userData = userSnap.data();
+    if (userData.password !== password) {
+      return { success: false, message: "비밀번호가 일치하지 않습니다." };
+    }
+
+    return { success: true, data: userData };
+  } catch (error) {
+    console.error("Login error:", error);
+    return { success: false, message: "로그인 중 오류가 발생했습니다." };
+  }
+};
+
+/**
+ * 포트폴리오 및 자산 업데이트 (매수/매도 시 즉시 저장)
+ */
+export const updatePortfolioToDB = async (userId, balance, portfolio, totalValue, returnPct) => {
+  if (!db || !userId) return;
   
   try {
-    const userRef = doc(db, 'users', nickname);
+    const userRef = doc(db, 'users', userId);
     await setDoc(userRef, {
-      nickname,
+      balance,
+      portfolio,
+      totalValue,
+      returnPct,
+      lastUpdated: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    console.error("Error saving portfolio to DB:", error);
+  }
+};
+
+/**
+ * 단순 랭킹 업데이트 (대시보드 실시간 갱신용)
+ */
+export const syncUserData = async (userId, totalValue, returnPct) => {
+  if (!db || !userId) return;
+  
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, {
       totalValue,
       returnPct,
       lastUpdated: new Date().toISOString()
@@ -45,10 +112,11 @@ export const syncUserData = async (nickname, totalValue, returnPct) => {
   }
 };
 
-// Subscribe to leaderboard top 50
+/**
+ * 명예의 전당 구독 (Top 50)
+ */
 export const subscribeToLeaderboard = (callback) => {
   if (!db) {
-    // Return a mock callback if Firebase isn't configured
     callback([]);
     return () => {};
   }
